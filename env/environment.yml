@@ -1,0 +1,48 @@
+name: np-pipeline
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  # ── Core Python ──
+  - python=3.10
+  - pip
+  - pandas>=1.5
+  - numpy>=1.23
+  - scipy>=1.9
+  - requests>=2.28
+  - pyyaml>=6.0
+
+  # ── Network & ML ──
+  - networkx>=2.8
+  - scikit-learn>=1.1
+  - matplotlib>=3.6
+  - seaborn>=0.12
+
+  # ── Chemistry (Step 01, 08) ──
+  - rdkit>=2022.09
+  - openbabel>=3.1
+
+  # ── Bioinformatics ──
+  - mygene>=3.2
+
+  # ── R (Step 06, 07, 09) ──
+  - r-base=4.3
+  - r-yaml
+  - r-dplyr
+  - r-readr
+  - r-ggplot2
+  - r-patchwork
+  - bioconductor-clusterprofiler>=4.6
+  - bioconductor-org.hs.eg.db
+  - bioconductor-dose
+  - bioconductor-enrichplot
+  - bioconductor-gsva
+
+  # ── Workflow ──
+  - snakemake>=7.25
+
+  # ── pip-only packages ──
+  - pip:
+    - matplotlib-venn>=0.11
+    - mygene>=3.2.2

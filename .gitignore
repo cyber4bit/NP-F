@@ -20,7 +20,6 @@ __pycache__/
 # Environments
 .venv/
 venv/
-ENV/
 env/.conda/
 env/.mamba/
 
