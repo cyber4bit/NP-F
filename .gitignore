@@ -16,6 +16,8 @@ __pycache__/
 .omx/
 .vscode/
 .idea/
+claude_prompt.md
+codex_prompt.md
 
 # Environments
 .venv/
