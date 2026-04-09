@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# R / notebooks
+.Rhistory
+.RData
+.Rproj.user/
+.ipynb_checkpoints/
+
+# Local tooling
+.snakemake/
+.claude/
+.omx/
+.vscode/
+.idea/
+
+# Environments
+.venv/
+venv/
+ENV/
+env/.conda/
+env/.mamba/
+
+# Logs and caches
+logs/*
+!logs/.gitkeep
+data/raw/cached/*
+!data/raw/cached/.gitkeep
+!data/raw/cached/COLUMN_FORMATS.md
+data/raw/geo_datasets/*
+!data/raw/geo_datasets/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+results/docking/*
+!results/docking/.gitkeep
+results/figures/*
+!results/figures/.gitkeep
+results/tables/*
+!results/tables/.gitkeep
+
+# Generated docs
+docs/workflow_dag.pdf
+
+# OS files
+Thumbs.db
+.DS_Store

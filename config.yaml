@@ -1,0 +1,215 @@
+# ============================================================
+# Network Pharmacology Pipeline - Global Configuration
+# ============================================================
+# Template version: 2026-v2
+# Example drug:    血筒 (大血藤 / Caulis Sargentodoxae)
+# Example disease: 类风湿关节炎 (Rheumatoid Arthritis, RA)
+#
+# Reference papers:
+#   [CTS]  Xie et al., Phytomedicine 136 (2025) 156227
+#   [BBR]  Zhao et al., Pharmacogenomics Pers Med 2025:18 263-278
+#   [SPI]  Zhu & He, Front Pharmacol 17:1770261 (2026)
+# ============================================================
+
+# ── 1. DRUG SETTINGS ────────────────────────────────────────
+drug:
+  name: "Xuetong"                       # 血筒 / 大血藤
+  chinese_name: "血筒"
+  latin_name: "Sargentodoxa cuneata"
+  english_alias: "Caulis Sargentodoxae"
+  pubchem_cid: null                     # fill after PubChem lookup
+  tcmsp_herb_id: null                   # fill after TCMSP lookup (e.g. "MWZ0583")
+  source_database: "TCMSP"             # primary compound source
+
+# ── 2. DISEASE SETTINGS ─────────────────────────────────────
+disease:
+  name: "rheumatoid arthritis"
+  chinese_name: "类风湿关节炎"
+  abbreviation: "RA"
+  mesh_term: "Arthritis, Rheumatoid"
+  icd10: "M05-M06"
+  # GEO accession numbers — fill with actual datasets
+  geo_bulk_accession: "GSE93272"        # RA synovial tissue bulk RNA-seq
+  geo_scrna_accession: "GSE159117"      # RA synovial scRNA-seq (Zhang et al.)
+  geo_spatial_accession: null            # spatial transcriptomics (optional)
+
+# ── 3. COMPOUND SCREENING THRESHOLDS (Step 01) ──────────────
+# Reference: TCMSP standard; adjustable for non-TCM drugs
+compound_filter:
+  OB_threshold: 30          # oral bioavailability (%), Hopkins 2008
+  DL_threshold: 0.18        # drug-likeness score
+  MW_max: 900               # molecular weight ceiling (Da)
+  logP_range: [-2, 10]      # lipophilicity range
+
+# ── 4. TARGET PREDICTION DATABASES (Step 02) ────────────────
+target_prediction:
+  databases:
+    - "TCMSP"                  # herb-target pairs
+    - "SwissTargetPrediction"  # ligand-based
+    - "PharmMapper"            # pharmacophore-based
+    - "CTD"                    # comparative toxicogenomics
+    - "SEA"                    # similarity ensemble approach
+  species: "Homo sapiens"
+  min_probability: 0.5         # SwissTargetPrediction cutoff
+  query_date: "YYYY-MM-DD"    # ← fill at runtime
+
+# ── 5. DISEASE TARGET DATABASES (Step 03) ───────────────────
+disease_targets:
+  databases:
+    - "GeneCards"
+    - "OMIM"
+    - "DisGeNET"
+  genecards_relevance_min: 1.0   # GeneCards relevance score cutoff
+  disgenet_score_min: 0.1        # DisGeNET GDA score cutoff
+
+# ── 6. PPI NETWORK (Step 04) ────────────────────────────────
+ppi:
+  database: "STRING"
+  version: "12.0"
+  confidence_score: 0.4        # BBR: 0.4; SPI: 0.9 (high confidence)
+  species_id: 9606              # Homo sapiens
+
+# ── 7. HUB GENE SELECTION (Step 05) ─────────────────────────
+hub_selection:
+  # Topological metrics
+  top_n_degree: 20
+  top_n_betweenness: 20
+  # Machine learning filters
+  lasso:
+    alpha_range: [0.001, 1.0]
+    cv_folds: 10
+    seed: 42
+  random_forest:
+    n_estimators: 1000
+    max_features: "sqrt"
+    seed: 42
+    importance_threshold: 0.01
+  # MCODE (Cytoscape plugin) — BBR template
+  mcode:
+    degree_cutoff: 2
+    score_cutoff: 0.2
+    k_core: 2
+    max_depth: 100
+
+# ── 8. ENRICHMENT ANALYSIS (Step 06) ────────────────────────
+enrichment:
+  databases: ["GO_BP", "GO_CC", "GO_MF", "KEGG", "Reactome"]
+  p_cutoff: 0.05
+  q_cutoff: 0.2
+  min_gene_set_size: 10
+  max_gene_set_size: 500
+  # GSVA settings (SPI template)
+  gsva:
+    method: "gsva"
+    kcdf: "Gaussian"
+    expression_top_pct: 30     # top/bottom 30% stratification
+
+# ── 9. MENDELIAN RANDOMIZATION (Step 07) ────────────────────
+# Reference: BBR template (TwoSampleMR)
+mr:
+  gwas_source: "FinnGen"       # FinnGen R10 for disease GWAS
+  gwas_phenotype: "RHEUMA_SEROPOS_RA"  # FinnGen phenotype code for RA
+  eqtl_source: "eQTLGen"      # cis-eQTL (blood)
+  snp_p_threshold: 5.0e-8     # genome-wide significance
+  r2_clumping: 0.001           # LD clumping threshold
+  kb_window: 10000             # ±10000 kb locus window
+  f_stat_min: 10               # instrument strength cutoff
+  methods: ["IVW", "MR-Egger", "Weighted-Median", "Simple-Mode", "Weighted-Mode"]
+  sensitivity_tests: ["Cochran-Q", "MR-Egger-intercept", "MR-PRESSO"]
+
+# ── 10. MOLECULAR DOCKING (Step 08) ─────────────────────────
+# Reference: CTS (AutoDock Vina); BBR (Schrödinger)
+docking:
+  software: "AutoDock Vina"
+  version: "1.2.5"
+  exhaustiveness: 8
+  num_modes: 9
+  energy_range: 3              # kcal/mol
+  binding_energy_cutoff: -5.0  # kcal/mol threshold for "good" binding
+  # Molecular dynamics (BBR template: GROMACS 100 ns)
+  md:
+    software: "GROMACS"
+    version: "5.1.4"
+    force_field: "Amber99sb-ILDN"
+    water_model: "TIP3P"
+    simulation_time_ns: 100
+    temperature_K: 310
+    pressure_bar: 1
+
+# ── 11. SINGLE-CELL / SPATIAL ANALYSIS (Step 09, Optional) ──
+scrna:
+  enabled: false                # set true when scRNA-seq data available
+  software: "Seurat"
+  version: "4.3"
+  min_genes_per_cell: 500
+  max_genes_per_cell: 4500
+  max_mito_pct: 5.0
+  harmony_dims: 20
+  umap_resolution_global: 0.1
+  umap_resolution_myeloid: 0.1
+  umap_resolution_T_NK: 0.2
+  clustering_algorithm: "Harmony"
+  spatial:
+    enabled: false
+    platform: "10x Visium"
+    normalization: "NormalizeData"
+    correlation_method: "Spearman"
+
+# ── 12. IMMUNE INFILTRATION (Step 09b, Optional) ─────────────
+immune:
+  method: "ssGSEA"
+  gene_set: "msigDB"
+  n_immune_cell_types: 28
+  gene_sets_gmt: "data/raw/cached/msigdb_c7_immune.gmt"
+  correlation_abs_r_min: 0.3
+  p_cutoff: 0.05
+
+# ── 13. BINDING VALIDATION — EXPERIMENTAL GUIDE (Step 10) ───
+validation:
+  SPR:
+    chip: "CM5"
+    buffer: "PBS + 1% DMSO"
+    RU_immobilized: 15000
+    gradient_doses: [0.01, 0.1, 1, 10, 100]  # μmol/L
+  CETSA:
+    compound_conc_uM: 80
+    temperature_gradient: [40, 45, 50, 55, 60, 65]
+    centrifuge_rcf: 12000
+  inhibitor_rescue:
+    positive_control: null
+    concentration: null
+
+# ── 14. OUTPUT / REPRODUCIBILITY ────────────────────────────
+output:
+  figures_format: ["pdf", "png"]
+  dpi: 300
+  seed_global: 2024
+  log_level: "INFO"
+  cache_raw_exports: true
+
+# ── 15. DATA VALIDATION ─────────────────────────────────────
+# Used by 00_preflight.py to check pipeline readiness
+validation_rules:
+  min_compounds: 5             # minimum compounds after ADME filter
+  min_drug_targets: 10         # minimum drug targets
+  min_disease_targets: 50      # minimum disease targets
+  min_intersection: 5          # minimum intersection genes
+  min_hub_genes: 3             # minimum hub genes
+  placeholder_markers:         # strings that indicate placeholder data
+    - "placeholder"
+    - "YYYY-MM-DD"
+    - "UNKNOWN"
+    - "N/A"
+
+# ── 16. SOFTWARE VERSIONS (lock at runtime) ──────────────────
+software_versions:
+  Python: "3.10"
+  R: "4.3"
+  rdkit: null
+  networkx: null
+  seurat: "4.3"
+  harmony: null
+  ggplot2: null
+  TwoSampleMR: null
+  autodock_vina: "1.2.5"
+  gromacs: "5.1.4"
