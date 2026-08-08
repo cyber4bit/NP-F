@@ -1,0 +1,404 @@
+name: V13 GSE24742 frozen holdout
+
+on:
+  push:
+    branches:
+      - analysis/v13-gse24742-holdout
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out frozen analysis branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install numerical dependencies
+        run: python -m pip install --disable-pip-version-check --no-cache-dir numpy pandas scipy
+
+      - name: Download official GEO matrix and execute frozen holdout
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p v13_holdout_output
+          cat > /tmp/run_v13_holdout.py <<'PY'
+          from __future__ import annotations
+
+          import gzip
+          import hashlib
+          import io
+          import itertools
+          import json
+          import math
+          import shutil
+          import sys
+          import time
+          import urllib.request
+          from pathlib import Path
+
+          import numpy as np
+          import pandas as pd
+          from scipy import stats
+
+          OUT = Path("v13_holdout_output")
+          OUT.mkdir(parents=True, exist_ok=True)
+
+          CANDIDATE_ID = "PSO_RTX_CDC42SE1_IDH3A_SPTSSA_SUB1_V13"
+          GENES = ["CDC42SE1", "IDH3A", "SPTSSA", "SUB1"]
+          PROBE_MAP = {
+              "CDC42SE1": ["218157_x_at", "222326_at", "225076_at"],
+              "IDH3A": ["202069_s_at", "202070_s_at", "202071_at"],
+              "SPTSSA": ["221831_at"],
+              "SUB1": ["202428_x_at", "212857_x_at"],
+          }
+
+          PRE = [
+              "GSM607508", "GSM609031", "GSM609033", "GSM609035",
+              "GSM609037", "GSM609386", "GSM609388", "GSM609390",
+              "GSM609392", "GSM609394", "GSM609396", "GSM609398",
+          ]
+          POST = [
+              "GSM607509", "GSM609032", "GSM609034", "GSM609036",
+              "GSM609038", "GSM609387", "GSM609389", "GSM609391",
+              "GSM609393", "GSM609395", "GSM609397", "GSM609399",
+          ]
+          PAIRS = list(zip(PRE, POST, strict=True))
+
+          HARD_GATES = {
+              "minimum_complete_pairs": 6,
+              "module_effect_post_minus_pre": "<0",
+              "paired_t_p": "<=0.05",
+              "exact_signflip_p": "<=0.05",
+              "negative_pair_fraction": ">=0.60",
+              "negative_gene_fraction": ">=0.75",
+              "lodo_direction_stability": "=1.00",
+              "all_leave_one_gene_out_effects": "<0",
+              "confirmatory_family_size": 1,
+          }
+
+          URLS = [
+              "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE24nnn/GSE24742/matrix/GSE24742_series_matrix.txt.gz",
+              "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE24nnn/GSE24742/matrix/GSE24742-GPL570_series_matrix.txt.gz",
+              "https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE24742&format=file&file=GSE24742_series_matrix.txt.gz",
+          ]
+
+          def sha256(path: Path) -> str:
+              h = hashlib.sha256()
+              with path.open("rb") as fh:
+                  for block in iter(lambda: fh.read(1024 * 1024), b""):
+                      h.update(block)
+              return h.hexdigest()
+
+          def download() -> tuple[Path, str]:
+              dst = OUT / "GSE24742_series_matrix.txt.gz"
+              errors: list[str] = []
+              for url in URLS:
+                  for attempt in range(1, 4):
+                      try:
+                          req = urllib.request.Request(
+                              url,
+                              headers={
+                                  "User-Agent": "Mozilla/5.0 V13-frozen-holdout/1.0",
+                                  "Accept": "*/*",
+                              },
+                          )
+                          with urllib.request.urlopen(req, timeout=120) as response, dst.open("wb") as out:
+                              shutil.copyfileobj(response, out)
+                          if dst.stat().st_size < 100_000:
+                              raise RuntimeError(f"download too small: {dst.stat().st_size} bytes")
+                          with gzip.open(dst, "rt", encoding="utf-8", errors="replace") as test:
+                              prefix = test.read(512)
+                          if "Series_title" not in prefix and "Series_geo_accession" not in prefix:
+                              raise RuntimeError("gzip is readable but does not resemble a GEO series matrix")
+                          return dst, url
+                      except Exception as exc:
+                          errors.append(f"{url} attempt {attempt}: {type(exc).__name__}: {exc}")
+                          if dst.exists():
+                              dst.unlink()
+                          time.sleep(2 * attempt)
+              raise RuntimeError("All official GEO matrix download routes failed:\n" + "\n".join(errors))
+
+          def split_geo_line(line: str) -> list[str]:
+              return [x.strip().strip('"') for x in line.rstrip("\n").split("\t")]
+
+          def parse_matrix(path: Path) -> tuple[dict[str, list[str]], pd.DataFrame]:
+              metadata: dict[str, list[str]] = {}
+              table_lines: list[str] = []
+              in_table = False
+              with gzip.open(path, "rt", encoding="utf-8", errors="replace") as fh:
+                  for line in fh:
+                      if line.startswith("!series_matrix_table_begin"):
+                          in_table = True
+                          continue
+                      if line.startswith("!series_matrix_table_end"):
+                          in_table = False
+                          break
+                      if in_table:
+                          table_lines.append(line)
+                      elif line.startswith("!Sample_"):
+                          parts = split_geo_line(line)
+                          metadata.setdefault(parts[0], []).append(parts[1:])
+              if not table_lines:
+                  raise RuntimeError("No !series_matrix_table_begin block found")
+              matrix = pd.read_csv(
+                  io.StringIO("".join(table_lines)),
+                  sep="\t",
+                  quotechar='"',
+                  dtype=str,
+                  low_memory=False,
+              )
+              first = matrix.columns[0]
+              matrix = matrix.rename(columns={first: "ID_REF"})
+              matrix["ID_REF"] = matrix["ID_REF"].astype(str).str.strip().str.strip('"')
+              matrix = matrix.set_index("ID_REF")
+              matrix.columns = [str(c).strip().strip('"') for c in matrix.columns]
+              return metadata, matrix
+
+          matrix_path, source_url = download()
+          meta, matrix = parse_matrix(matrix_path)
+
+          all_samples = PRE + POST
+          missing_samples = sorted(set(all_samples) - set(matrix.columns))
+          if missing_samples:
+              raise RuntimeError(f"Frozen samples missing from matrix: {missing_samples}")
+
+          frozen_probes = [p for g in GENES for p in PROBE_MAP[g]]
+          missing_probes = sorted(set(frozen_probes) - set(matrix.index))
+          if missing_probes:
+              raise RuntimeError(f"Frozen probes missing from matrix: {missing_probes}")
+
+          target_raw = matrix.loc[frozen_probes, all_samples].apply(pd.to_numeric, errors="coerce")
+          if target_raw.isna().any().any():
+              where = np.argwhere(target_raw.isna().to_numpy())
+              raise RuntimeError(f"Non-numeric target values at {where.tolist()[:20]}")
+          if (target_raw <= 0).any().any():
+              raise RuntimeError("Frozen protocol requires positive MAS5 values before log2; non-positive target values found")
+
+          target_log2 = np.log2(target_raw.astype(float))
+
+          gene_expr = pd.DataFrame(index=GENES, columns=all_samples, dtype=float)
+          for gene in GENES:
+              gene_expr.loc[gene] = target_log2.loc[PROBE_MAP[gene]].mean(axis=0)
+
+          means = gene_expr.mean(axis=1)
+          sds = gene_expr.std(axis=1, ddof=0)
+          if (sds <= 0).any():
+              raise RuntimeError(f"Zero-variance gene(s): {sds[sds <= 0].index.tolist()}")
+          gene_z = gene_expr.sub(means, axis=0).div(sds, axis=0)
+          module = gene_z.mean(axis=0)
+
+          pair_rows = []
+          for i, (pre, post) in enumerate(PAIRS, start=1):
+              pair_rows.append({
+                  "pair_id": i,
+                  "pre_accession": pre,
+                  "post_accession": post,
+                  "pre_module": float(module[pre]),
+                  "post_module": float(module[post]),
+                  "difference_post_minus_pre": float(module[post] - module[pre]),
+              })
+          pair_df = pd.DataFrame(pair_rows)
+          diffs = pair_df["difference_post_minus_pre"].to_numpy(dtype=float)
+          n_pairs = int(len(diffs))
+          effect = float(np.mean(diffs))
+
+          t_res = stats.ttest_1samp(diffs, popmean=0.0, alternative="two-sided")
+          paired_t_p = float(t_res.pvalue)
+
+          obs = abs(effect)
+          signflip_stats = []
+          for signs in itertools.product((-1.0, 1.0), repeat=n_pairs):
+              signflip_stats.append(abs(float(np.mean(diffs * np.asarray(signs)))))
+          signflip_stats_arr = np.asarray(signflip_stats)
+          exact_signflip_p = float(np.mean(signflip_stats_arr >= (obs - 1e-15)))
+
+          try:
+              wilcoxon = stats.wilcoxon(
+                  diffs,
+                  zero_method="wilcox",
+                  correction=False,
+                  alternative="two-sided",
+                  method="exact",
+              )
+              wilcoxon_p = float(wilcoxon.pvalue)
+          except Exception:
+              wilcoxon_p = None
+
+          negative_pair_fraction = float(np.mean(diffs < 0))
+
+          gene_effects: dict[str, float] = {}
+          for gene in GENES:
+              gd = np.asarray([
+                  float(gene_z.loc[gene, post] - gene_z.loc[gene, pre])
+                  for pre, post in PAIRS
+              ])
+              gene_effects[gene] = float(np.mean(gd))
+          negative_gene_fraction = float(np.mean(np.asarray(list(gene_effects.values())) < 0))
+
+          lodo_effects: list[float] = []
+          for i in range(n_pairs):
+              lodo_effects.append(float(np.mean(np.delete(diffs, i))))
+          lodo = float(np.mean(np.asarray(lodo_effects) < 0))
+
+          loo_gene_effects: dict[str, float] = {}
+          for omitted in GENES:
+              kept = [g for g in GENES if g != omitted]
+              loo_module = gene_z.loc[kept].mean(axis=0)
+              loo_diffs = np.asarray([
+                  float(loo_module[post] - loo_module[pre])
+                  for pre, post in PAIRS
+              ])
+              loo_gene_effects[f"drop_{omitted}"] = float(np.mean(loo_diffs))
+
+          checks = {
+              "minimum_complete_pairs": n_pairs >= 6,
+              "module_effect_post_minus_pre": effect < 0,
+              "paired_t_p": paired_t_p <= 0.05,
+              "exact_signflip_p": exact_signflip_p <= 0.05,
+              "negative_pair_fraction": negative_pair_fraction >= 0.60,
+              "negative_gene_fraction": negative_gene_fraction >= 0.75,
+              "lodo_direction_stability": math.isclose(lodo, 1.0, rel_tol=0.0, abs_tol=1e-12),
+              "all_leave_one_gene_out_effects": all(v < 0 for v in loo_gene_effects.values()),
+              "confirmatory_family_size": True,
+              "all_frozen_samples_present": not missing_samples,
+              "all_frozen_probes_present": not missing_probes,
+              "positive_pre_log2_values": bool((target_raw > 0).all().all()),
+          }
+          holdout_pass = all(checks.values())
+
+          geo_accession_rows = meta.get("!Sample_geo_accession", [])
+          geo_accessions = geo_accession_rows[0] if geo_accession_rows else []
+          metadata_rows = []
+          for idx, accession in enumerate(geo_accessions):
+              row = {"accession": accession}
+              for key, blocks in meta.items():
+                  short = key.removeprefix("!Sample_")
+                  vals = []
+                  for block in blocks:
+                      if idx < len(block):
+                          vals.append(block[idx])
+                  row[short] = " | ".join(v for v in vals if v)
+              metadata_rows.append(row)
+          metadata_df = pd.DataFrame(metadata_rows)
+
+          target_raw.to_csv(OUT / "V13_GSE24742_target_raw_MAS5.tsv", sep="\t")
+          target_log2.to_csv(OUT / "V13_GSE24742_target_log2.tsv", sep="\t")
+          gene_expr.to_csv(OUT / "V13_GSE24742_gene_log2.tsv", sep="\t")
+          gene_z.to_csv(OUT / "V13_GSE24742_gene_z.tsv", sep="\t")
+          pair_df.to_csv(OUT / "V13_GSE24742_pair_differences.tsv", sep="\t", index=False)
+          metadata_df.to_csv(OUT / "V13_GSE24742_sample_metadata.tsv", sep="\t", index=False)
+
+          decision = {
+              "schema_version": "1.0",
+              "candidate_id": CANDIDATE_ID,
+              "genes": GENES,
+              "terminal_holdout_dataset": "GSE24742",
+              "source_url_used": source_url,
+              "matrix_filename": matrix_path.name,
+              "matrix_size_bytes": matrix_path.stat().st_size,
+              "matrix_sha256": sha256(matrix_path),
+              "probe_map": PROBE_MAP,
+              "pair_map": [{"pre": a, "post": b} for a, b in PAIRS],
+              "scoring_rule": {
+                  "input": "submitter processed MAS5 signal from official GEO series matrix",
+                  "transform": "log2 of positive probe-set values",
+                  "probe_to_gene": "arithmetic mean of all frozen probe sets",
+                  "gene_standardization": "z across all 24 samples with population SD",
+                  "module": "equal mean of four gene z-scores",
+                  "effect": "mean paired post-minus-pre difference",
+              },
+              "statistics": {
+                  "n_complete_pairs": n_pairs,
+                  "module_effect_post_minus_pre": effect,
+                  "paired_t_p_two_sided": paired_t_p,
+                  "exact_signflip_p_two_sided": exact_signflip_p,
+                  "wilcoxon_p_two_sided_supportive": wilcoxon_p,
+                  "negative_pairs": int(np.sum(diffs < 0)),
+                  "negative_pair_fraction": negative_pair_fraction,
+                  "gene_effects_post_minus_pre": gene_effects,
+                  "negative_gene_fraction": negative_gene_fraction,
+                  "lodo_effects": lodo_effects,
+                  "lodo_direction_stability": lodo,
+                  "leave_one_gene_out_effects": loo_gene_effects,
+              },
+              "hard_gates": HARD_GATES,
+              "checks": checks,
+              "holdout_status": "PASS" if holdout_pass else "FAIL",
+              "formal_overall_pass_count": 1 if holdout_pass else 0,
+              "overall_status": "OVERALL_PASS_NUMERIC_HOLDOUT_PENDING_NOVELTY_AUDIT" if holdout_pass else "FAIL_FROZEN_GSE24742_HOLDOUT",
+              "boundary": (
+                  "This run evaluates only the frozen GSE24742 terminal holdout. "
+                  "Strict non-RA source discovery, dual-RA development, provenance, and comprehensive novelty "
+                  "must be joined by the terminal verifier before final portfolio OVERALL_PASS."
+              ),
+          }
+          (OUT / "V13_GSE24742_holdout_decision.json").write_text(
+              json.dumps(decision, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+          report = f"""# V13 GSE24742 冻结终局验证
+
+          - 候选：`{CANDIDATE_ID}`
+          - 基因：`{' – '.join(GENES)}`
+          - 完整配对：{n_pairs}
+          - 模块效应（12周后－基线）：{effect:.9f}
+          - 配对 t 检验（双侧）：{paired_t_p:.9g}
+          - 精确符号翻转检验（双侧）：{exact_signflip_p:.9g}
+          - Wilcoxon（支持性）：{wilcoxon_p}
+          - 下降配对：{int(np.sum(diffs < 0))}/{n_pairs}（{negative_pair_fraction:.3f}）
+          - 下降基因比例：{negative_gene_fraction:.3f}
+          - LODO 方向稳定性：{lodo:.3f}
+          - 所有删一基因效应为负：{all(v < 0 for v in loo_gene_effects.values())}
+          - 终局数值状态：**{'PASS' if holdout_pass else 'FAIL'}**
+
+          ## 基因效应
+
+          ```json
+          {json.dumps(gene_effects, ensure_ascii=False, indent=2)}
+          ```
+
+          ## 删一基因效应
+
+          ```json
+          {json.dumps(loo_gene_effects, ensure_ascii=False, indent=2)}
+          ```
+
+          ## 边界
+
+          本文件只裁决预先冻结的 GSE24742 终局端点。最终 `OVERALL_PASS` 仍需把该结果与严格非 RA 来源、
+          双 RA 开发、完整新颖性和终端独立验证器合并。
+          """
+          (OUT / "V13_GSE24742_holdout_report_zh.md").write_text(report, encoding="utf-8")
+
+          manifest_rows = []
+          for path in sorted(OUT.iterdir()):
+              if path.is_file():
+                  manifest_rows.append(f"{sha256(path)}  {path.name}")
+          (OUT / "V13_GSE24742_manifest.sha256").write_text(
+              "\n".join(manifest_rows) + "\n", encoding="utf-8"
+          )
+
+          print(json.dumps(decision, ensure_ascii=False, indent=2))
+          if not holdout_pass:
+              sys.exit(2)
+          PY
+          python /tmp/run_v13_holdout.py
+
+      - name: Upload frozen holdout evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V13_GSE24742_frozen_holdout
+          path: v13_holdout_output/
+          if-no-files-found: error
+          retention-days: 30
