@@ -25,10 +25,11 @@ jobs:
       - name: Install numerical dependencies
         run: python -m pip install --disable-pip-version-check --no-cache-dir numpy pandas scipy
 
-      - name: Download official GEO matrix and execute frozen holdout
+      - name: Audit GPL570 identifier and execute frozen holdout
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf v13_holdout_output
           mkdir -p v13_holdout_output
           cat > /tmp/run_v13_holdout.py <<'PY'
           from __future__ import annotations
@@ -39,6 +40,7 @@ jobs:
           import itertools
           import json
           import math
+          import re
           import shutil
           import sys
           import time
@@ -54,12 +56,19 @@ jobs:
 
           CANDIDATE_ID = "PSO_RTX_CDC42SE1_IDH3A_SPTSSA_SUB1_V13"
           GENES = ["CDC42SE1", "IDH3A", "SPTSSA", "SUB1"]
-          PROBE_MAP = {
+          ORIGINAL_PROBE_MAP = {
               "CDC42SE1": ["218157_x_at", "222326_at", "225076_at"],
               "IDH3A": ["202069_s_at", "202070_s_at", "202071_at"],
               "SPTSSA": ["221831_at"],
               "SUB1": ["202428_x_at", "212857_x_at"],
           }
+          EFFECTIVE_PROBE_MAP = {
+              "CDC42SE1": ["218157_x_at", "222326_at", "225076_s_at"],
+              "IDH3A": ["202069_s_at", "202070_s_at", "202071_at"],
+              "SPTSSA": ["221831_at"],
+              "SUB1": ["202428_x_at", "212857_x_at"],
+          }
+          AMENDMENT_PATH = Path("analysis/v13/V13_probe_identifier_amendment_001.json")
 
           PRE = [
               "GSM607508", "GSM609031", "GSM609033", "GSM609035",
@@ -85,11 +94,16 @@ jobs:
               "confirmatory_family_size": 1,
           }
 
-          URLS = [
+          MATRIX_URLS = [
               "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE24nnn/GSE24742/matrix/GSE24742_series_matrix.txt.gz",
               "https://ftp.ncbi.nlm.nih.gov/geo/series/GSE24nnn/GSE24742/matrix/GSE24742-GPL570_series_matrix.txt.gz",
               "https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE24742&format=file&file=GSE24742_series_matrix.txt.gz",
           ]
+          ANNOTATION_URLS = [
+              "https://ftp.ncbi.nlm.nih.gov/geo/platforms/GPLnnn/GPL570/annot/GPL570.annot.gz",
+              "https://ftp.ncbi.nlm.nih.gov/geo/platforms/GPLnnn/GPL570/annot/GPL570.annot.txt.gz",
+          ]
+
 
           def sha256(path: Path) -> str:
               h = hashlib.sha256()
@@ -98,40 +112,50 @@ jobs:
                       h.update(block)
               return h.hexdigest()
 
-          def download() -> tuple[Path, str]:
-              dst = OUT / "GSE24742_series_matrix.txt.gz"
+
+          def download(
+              urls: list[str],
+              dst: Path,
+              *,
+              minimum_size: int,
+              required_tokens: tuple[str, ...],
+          ) -> str:
               errors: list[str] = []
-              for url in URLS:
+              for url in urls:
                   for attempt in range(1, 4):
                       try:
                           req = urllib.request.Request(
                               url,
                               headers={
-                                  "User-Agent": "Mozilla/5.0 V13-frozen-holdout/1.0",
+                                  "User-Agent": "Mozilla/5.0 V13-frozen-holdout/1.1",
                                   "Accept": "*/*",
                               },
                           )
                           with urllib.request.urlopen(req, timeout=120) as response, dst.open("wb") as out:
                               shutil.copyfileobj(response, out)
-                          if dst.stat().st_size < 100_000:
+                          if dst.stat().st_size < minimum_size:
                               raise RuntimeError(f"download too small: {dst.stat().st_size} bytes")
                           with gzip.open(dst, "rt", encoding="utf-8", errors="replace") as test:
-                              prefix = test.read(512)
-                          if "Series_title" not in prefix and "Series_geo_accession" not in prefix:
-                              raise RuntimeError("gzip is readable but does not resemble a GEO series matrix")
-                          return dst, url
+                              prefix = test.read(4096)
+                          if required_tokens and not any(token in prefix for token in required_tokens):
+                              raise RuntimeError(
+                                  f"gzip readable but required tokens absent: {required_tokens}"
+                              )
+                          return url
                       except Exception as exc:
                           errors.append(f"{url} attempt {attempt}: {type(exc).__name__}: {exc}")
                           if dst.exists():
                               dst.unlink()
                           time.sleep(2 * attempt)
-              raise RuntimeError("All official GEO matrix download routes failed:\n" + "\n".join(errors))
+              raise RuntimeError("All download routes failed:\n" + "\n".join(errors))
+
 
           def split_geo_line(line: str) -> list[str]:
               return [x.strip().strip('"') for x in line.rstrip("\n").split("\t")]
 
-          def parse_matrix(path: Path) -> tuple[dict[str, list[str]], pd.DataFrame]:
-              metadata: dict[str, list[str]] = {}
+
+          def parse_matrix(path: Path) -> tuple[dict[str, list[list[str]]], pd.DataFrame]:
+              metadata: dict[str, list[list[str]]] = {}
               table_lines: list[str] = []
               in_table = False
               with gzip.open(path, "rt", encoding="utf-8", errors="replace") as fh:
@@ -140,7 +164,6 @@ jobs:
                           in_table = True
                           continue
                       if line.startswith("!series_matrix_table_end"):
-                          in_table = False
                           break
                       if in_table:
                           table_lines.append(line)
@@ -163,31 +186,150 @@ jobs:
               matrix.columns = [str(c).strip().strip('"') for c in matrix.columns]
               return metadata, matrix
 
-          matrix_path, source_url = download()
+
+          def parse_annotation(path: Path) -> pd.DataFrame:
+              data_lines: list[str] = []
+              with gzip.open(path, "rt", encoding="utf-8", errors="replace") as fh:
+                  for line in fh:
+                      if line.startswith("#"):
+                          continue
+                      if not line.strip():
+                          continue
+                      data_lines.append(line)
+              if not data_lines:
+                  raise RuntimeError("GPL570 annotation contains no tabular lines")
+              df = pd.read_csv(
+                  io.StringIO("".join(data_lines)),
+                  sep="\t",
+                  dtype=str,
+                  low_memory=False,
+                  quoting=3,
+              )
+              df.columns = [str(c).strip().strip('"') for c in df.columns]
+              return df
+
+
+          matrix_path = OUT / "GSE24742_series_matrix.txt.gz"
+          matrix_url = download(
+              MATRIX_URLS,
+              matrix_path,
+              minimum_size=100_000,
+              required_tokens=("Series_title", "Series_geo_accession"),
+          )
           meta, matrix = parse_matrix(matrix_path)
+
+          annotation_path = OUT / "GPL570.annot.gz"
+          annotation_url = download(
+              ANNOTATION_URLS,
+              annotation_path,
+              minimum_size=100_000,
+              required_tokens=("Gene symbol", "gene symbol", "\tID\t", "ID\t"),
+          )
+          annotation = parse_annotation(annotation_path)
+
+          id_col = next(
+              (c for c in annotation.columns if c.strip().lower() in {"id", "id_ref", "probe set id"}),
+              annotation.columns[0],
+          )
+          symbol_col = next(
+              (c for c in annotation.columns if "gene symbol" in c.strip().lower()),
+              None,
+          )
+          if symbol_col is None:
+              raise RuntimeError(f"Cannot identify Gene symbol column: {annotation.columns.tolist()}")
+
+          original_id = "225076_at"
+          corrected_id = "225076_s_at"
+          original_absent_matrix = original_id not in matrix.index
+          corrected_present_matrix = corrected_id in matrix.index
+
+          candidate_ids_for_annotation = sorted({
+              original_id,
+              corrected_id,
+              *[p for probes in EFFECTIVE_PROBE_MAP.values() for p in probes],
+          })
+          annotation_subset = annotation[
+              annotation[id_col].astype(str).isin(candidate_ids_for_annotation)
+          ].copy()
+          annotation_subset.to_csv(
+              OUT / "V13_GPL570_frozen_probe_annotation.tsv",
+              sep="\t",
+              index=False,
+          )
+
+          corrected_rows = annotation[
+              annotation[id_col].astype(str).eq(corrected_id)
+          ].copy()
+          corrected_symbols = corrected_rows[symbol_col].fillna("").astype(str).tolist()
+          corrected_tokens = {
+              token
+              for value in corrected_symbols
+              for token in re.split(r"\s*///\s*|\s*//\s*|\s*;\s*|\s*,\s*", value)
+              if token
+          }
+          corrected_maps_to_gene = "CDC42SE1" in corrected_tokens
+
+          amendment_present = AMENDMENT_PATH.exists()
+          amendment_sha256 = sha256(AMENDMENT_PATH) if amendment_present else None
+          identifier_audit_checks = {
+              "amendment_file_present": amendment_present,
+              "original_225076_at_absent_from_matrix": original_absent_matrix,
+              "corrected_225076_s_at_present_in_matrix": corrected_present_matrix,
+              "corrected_225076_s_at_present_in_annotation": not corrected_rows.empty,
+              "corrected_225076_s_at_maps_to_CDC42SE1": corrected_maps_to_gene,
+          }
+          identifier_audit_pass = all(identifier_audit_checks.values())
+
+          identifier_audit = {
+              "amendment_id": "V13_PROBE_IDENTIFIER_AMENDMENT_001",
+              "amendment_sha256": amendment_sha256,
+              "matrix_url": matrix_url,
+              "matrix_sha256": sha256(matrix_path),
+              "annotation_url": annotation_url,
+              "annotation_sha256": sha256(annotation_path),
+              "annotation_id_column": id_col,
+              "annotation_symbol_column": symbol_col,
+              "original_identifier": original_id,
+              "corrected_identifier": corrected_id,
+              "corrected_annotation_symbols": corrected_symbols,
+              "checks": identifier_audit_checks,
+              "status": "PASS_PRE_NUMERIC_IDENTIFIER_CORRECTION"
+              if identifier_audit_pass
+              else "FAIL_IDENTIFIER_CORRECTION",
+              "numeric_target_values_read_before_audit": False,
+          }
+          (OUT / "V13_probe_identifier_audit.json").write_text(
+              json.dumps(identifier_audit, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          if not identifier_audit_pass:
+              raise RuntimeError(f"Pre-numeric identifier correction failed: {identifier_audit}")
 
           all_samples = PRE + POST
           missing_samples = sorted(set(all_samples) - set(matrix.columns))
           if missing_samples:
               raise RuntimeError(f"Frozen samples missing from matrix: {missing_samples}")
 
-          frozen_probes = [p for g in GENES for p in PROBE_MAP[g]]
+          frozen_probes = [p for g in GENES for p in EFFECTIVE_PROBE_MAP[g]]
           missing_probes = sorted(set(frozen_probes) - set(matrix.index))
           if missing_probes:
-              raise RuntimeError(f"Frozen probes missing from matrix: {missing_probes}")
+              raise RuntimeError(f"Effective frozen probes missing from matrix: {missing_probes}")
 
           target_raw = matrix.loc[frozen_probes, all_samples].apply(pd.to_numeric, errors="coerce")
           if target_raw.isna().any().any():
               where = np.argwhere(target_raw.isna().to_numpy())
               raise RuntimeError(f"Non-numeric target values at {where.tolist()[:20]}")
           if (target_raw <= 0).any().any():
-              raise RuntimeError("Frozen protocol requires positive MAS5 values before log2; non-positive target values found")
+              raise RuntimeError(
+                  "Frozen protocol requires positive MAS5 values before log2; "
+                  "non-positive target values found"
+              )
 
           target_log2 = np.log2(target_raw.astype(float))
 
           gene_expr = pd.DataFrame(index=GENES, columns=all_samples, dtype=float)
           for gene in GENES:
-              gene_expr.loc[gene] = target_log2.loc[PROBE_MAP[gene]].mean(axis=0)
+              gene_expr.loc[gene] = target_log2.loc[EFFECTIVE_PROBE_MAP[gene]].mean(axis=0)
 
           means = gene_expr.mean(axis=1)
           sds = gene_expr.std(axis=1, ddof=0)
@@ -242,7 +384,9 @@ jobs:
                   for pre, post in PAIRS
               ])
               gene_effects[gene] = float(np.mean(gd))
-          negative_gene_fraction = float(np.mean(np.asarray(list(gene_effects.values())) < 0))
+          negative_gene_fraction = float(
+              np.mean(np.asarray(list(gene_effects.values())) < 0)
+          )
 
           lodo_effects: list[float] = []
           for i in range(n_pairs):
@@ -260,17 +404,22 @@ jobs:
               loo_gene_effects[f"drop_{omitted}"] = float(np.mean(loo_diffs))
 
           checks = {
+              "pre_numeric_identifier_audit": identifier_audit_pass,
               "minimum_complete_pairs": n_pairs >= 6,
               "module_effect_post_minus_pre": effect < 0,
               "paired_t_p": paired_t_p <= 0.05,
               "exact_signflip_p": exact_signflip_p <= 0.05,
               "negative_pair_fraction": negative_pair_fraction >= 0.60,
               "negative_gene_fraction": negative_gene_fraction >= 0.75,
-              "lodo_direction_stability": math.isclose(lodo, 1.0, rel_tol=0.0, abs_tol=1e-12),
-              "all_leave_one_gene_out_effects": all(v < 0 for v in loo_gene_effects.values()),
+              "lodo_direction_stability": math.isclose(
+                  lodo, 1.0, rel_tol=0.0, abs_tol=1e-12
+              ),
+              "all_leave_one_gene_out_effects": all(
+                  v < 0 for v in loo_gene_effects.values()
+              ),
               "confirmatory_family_size": True,
               "all_frozen_samples_present": not missing_samples,
-              "all_frozen_probes_present": not missing_probes,
+              "all_effective_frozen_probes_present": not missing_probes,
               "positive_pre_log2_values": bool((target_raw > 0).all().all()),
           }
           holdout_pass = all(checks.values())
@@ -294,24 +443,32 @@ jobs:
           target_log2.to_csv(OUT / "V13_GSE24742_target_log2.tsv", sep="\t")
           gene_expr.to_csv(OUT / "V13_GSE24742_gene_log2.tsv", sep="\t")
           gene_z.to_csv(OUT / "V13_GSE24742_gene_z.tsv", sep="\t")
-          pair_df.to_csv(OUT / "V13_GSE24742_pair_differences.tsv", sep="\t", index=False)
-          metadata_df.to_csv(OUT / "V13_GSE24742_sample_metadata.tsv", sep="\t", index=False)
+          pair_df.to_csv(
+              OUT / "V13_GSE24742_pair_differences.tsv", sep="\t", index=False
+          )
+          metadata_df.to_csv(
+              OUT / "V13_GSE24742_sample_metadata.tsv", sep="\t", index=False
+          )
 
           decision = {
-              "schema_version": "1.0",
+              "schema_version": "1.1",
               "candidate_id": CANDIDATE_ID,
               "genes": GENES,
               "terminal_holdout_dataset": "GSE24742",
-              "source_url_used": source_url,
+              "matrix_source_url": matrix_url,
               "matrix_filename": matrix_path.name,
               "matrix_size_bytes": matrix_path.stat().st_size,
               "matrix_sha256": sha256(matrix_path),
-              "probe_map": PROBE_MAP,
+              "annotation_source_url": annotation_url,
+              "annotation_sha256": sha256(annotation_path),
+              "probe_identifier_amendment": identifier_audit,
+              "original_probe_map": ORIGINAL_PROBE_MAP,
+              "effective_probe_map": EFFECTIVE_PROBE_MAP,
               "pair_map": [{"pre": a, "post": b} for a, b in PAIRS],
               "scoring_rule": {
                   "input": "submitter processed MAS5 signal from official GEO series matrix",
                   "transform": "log2 of positive probe-set values",
-                  "probe_to_gene": "arithmetic mean of all frozen probe sets",
+                  "probe_to_gene": "arithmetic mean of all effective frozen probe sets",
                   "gene_standardization": "z across all 24 samples with population SD",
                   "module": "equal mean of four gene z-scores",
                   "effect": "mean paired post-minus-pre difference",
@@ -334,11 +491,16 @@ jobs:
               "checks": checks,
               "holdout_status": "PASS" if holdout_pass else "FAIL",
               "formal_overall_pass_count": 1 if holdout_pass else 0,
-              "overall_status": "OVERALL_PASS_NUMERIC_HOLDOUT_PENDING_NOVELTY_AUDIT" if holdout_pass else "FAIL_FROZEN_GSE24742_HOLDOUT",
+              "overall_status": (
+                  "OVERALL_PASS_NUMERIC_HOLDOUT_PENDING_NOVELTY_AUDIT"
+                  if holdout_pass
+                  else "FAIL_FROZEN_GSE24742_HOLDOUT"
+              ),
               "boundary": (
-                  "This run evaluates only the frozen GSE24742 terminal holdout. "
-                  "Strict non-RA source discovery, dual-RA development, provenance, and comprehensive novelty "
-                  "must be joined by the terminal verifier before final portfolio OVERALL_PASS."
+                  "This run evaluates the frozen GSE24742 terminal holdout after a "
+                  "pre-numeric platform identifier correction. Final portfolio "
+                  "OVERALL_PASS still requires strict non-RA source, dual-RA development, "
+                  "provenance, comprehensive novelty, and terminal verifier integration."
               ),
           }
           (OUT / "V13_GSE24742_holdout_decision.json").write_text(
@@ -350,6 +512,7 @@ jobs:
 
           - 候选：`{CANDIDATE_ID}`
           - 基因：`{' – '.join(GENES)}`
+          - GPL570 标识符审计：**{'PASS' if identifier_audit_pass else 'FAIL'}**
           - 完整配对：{n_pairs}
           - 模块效应（12周后－基线）：{effect:.9f}
           - 配对 t 检验（双侧）：{paired_t_p:.9g}
@@ -373,12 +536,19 @@ jobs:
           {json.dumps(loo_gene_effects, ensure_ascii=False, indent=2)}
           ```
 
-          ## 边界
+          ## 标识符更正边界
+
+          `225076_at` 在官方 GSE24742 GPL570 矩阵中不存在。只有在官方 GPL570 注释确认
+          `225076_s_at` 映射至 `CDC42SE1`，且修订文件已在数值读取前封存时，工作流才继续。
+
+          ## 证据边界
 
           本文件只裁决预先冻结的 GSE24742 终局端点。最终 `OVERALL_PASS` 仍需把该结果与严格非 RA 来源、
-          双 RA 开发、完整新颖性和终端独立验证器合并。
+          双 RA 开发、全面新颖性和终端独立验证器合并。
           """
-          (OUT / "V13_GSE24742_holdout_report_zh.md").write_text(report, encoding="utf-8")
+          (OUT / "V13_GSE24742_holdout_report_zh.md").write_text(
+              report, encoding="utf-8"
+          )
 
           manifest_rows = []
           for path in sorted(OUT.iterdir()):
