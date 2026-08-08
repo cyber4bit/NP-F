@@ -1,0 +1,142 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "V15_STRICT_NONRA_PSORIASIS_FIBROBLAST_SOURCE",
+  "created_at_utc": "2026-08-08T10:18:30Z",
+  "objective": "Discover a psoriasis-derived fibroblast-oriented program using only non-RA human longitudinal data, then test transfer in two RA fibroblast study families and an isolated RA treatment holdout.",
+  "antecedent_failures": {
+    "V13": "FAIL_G0_PLATFORM_IDENTIFIER_MAP before terminal numeric extraction",
+    "V14": "FAIL_RA_DEVELOPMENT_NO_CONFIRMATORY_CANDIDATE; GSE24742 remained unopened"
+  },
+  "candidate_nomination_provenance": {
+    "pool_40_script": "screen_psoriasis_fibroblast_source_v2.py",
+    "pool_40_script_sha256": "f06b699da700ad2b2d4945dcd5f50f6bf8b86bb1f8bfe55e931e0df048b8f4c9",
+    "fixed_program_script": "m427_m431_source.py",
+    "fixed_program_script_sha256": "c6edce487ffe1cb8e19779cbbac06144ac786d87ab96538823d1464cca01726c",
+    "nomination_role": "identifier and hypothesis pool only; no historical RA result or current RA numeric value may enter V15 source scoring",
+    "genes": [
+      "ABRACL", "ADAM28", "ADAMDEC1", "BACE2", "C1R", "CALU", "CCL19", "CCL20", "CFAP221", "CHI3L2",
+      "COL4A4", "CYBA", "DPT", "ENC1", "EPAS1", "FAM20A", "FBLN2", "FKBP11", "GASK1B", "GLIS3",
+      "HAPLN3", "HMCN1", "HTRA1", "IGFBP4", "ISG15", "KCND3", "KDELR2", "KDELR3", "LTBP1", "LZTS1",
+      "ME3", "OSTC", "PDE3B", "PDE4D", "PDE5A", "PLA2G2A", "PLXDC1", "PPARGC1A", "PPIB", "PPIC",
+      "PXDN", "PYCR1", "RASSF4", "RIPOR3", "RTP4", "S100A12", "S100A8", "S100A9", "SEPTIN3", "SERPINF1",
+      "SIX2", "SLAMF8", "SSR3", "SSR4", "STAT1", "THY1", "TMED9", "TPP1", "TXNDC12"
+    ]
+  },
+  "dataset_roles": {
+    "GSE201827": "S_SOURCE_NON_RA_CANDIDATE_GENERATION",
+    "E-MTAB-11791": "S_RA_DEVELOPMENT_1",
+    "GSE112656": "S_RA_DEVELOPMENT_2",
+    "GSE24742": "C_RA_TERMINAL_HOLDOUT"
+  },
+  "non_ra_source": {
+    "dataset": "GSE201827 psoriasis skin",
+    "eligible_gene": "official GPL570 annotation has exactly one current gene symbol; symbol is present in both RA development gene universes",
+    "probe_to_gene": "arithmetic mean of all eligible probes mapped to the symbol",
+    "source_value_scale": "use submitter-processed series-matrix values without result-dependent transformation",
+    "composition_proxies": {
+      "fibroblast": ["COL1A1", "COL1A2", "DCN", "LUM", "COL3A1"],
+      "immune": ["PTPRC", "CD3D", "CD79A", "LST1", "FCER1G"],
+      "keratinocyte": ["KRT14", "KRT5", "KRT10", "KRT1", "KRT6A"]
+    },
+    "baseline": {
+      "samples": "65 paired BL.LS and BL.NL donors",
+      "module_score": "gene-wise z across the 130 baseline samples, equal gene mean",
+      "model": "paired module delta = intercept + paired fibroblast-proxy delta + paired immune-proxy delta + paired keratinocyte-proxy delta",
+      "covariance": "HC3",
+      "requirements": {
+        "raw_module_delta": ">0",
+        "adjusted_intercept": ">0",
+        "adjusted_p": "<=0.05",
+        "positive_pair_fraction": ">=0.60",
+        "lodo_adjusted_intercept_positive_fraction": ">=0.80",
+        "individual_gene_raw_delta_fraction_positive": "=1.00"
+      }
+    },
+    "week12": {
+      "samples": "38 secukinumab and 24 placebo donors with paired BL.LS/W12.LS",
+      "module_score": "gene-wise z across all BL.LS and W12.LS samples in the randomized week-12 analysis",
+      "model": "within-donor module change = intercept + secukinumab_indicator + fibroblast-proxy change + immune-proxy change + keratinocyte-proxy change",
+      "target_parameter": "secukinumab indicator",
+      "covariance": "HC3",
+      "permutation": "10000 arm-label permutations with seed 20260815; donor changes remain intact",
+      "requirements": {
+        "raw_secukinumab_minus_placebo_change": "<0",
+        "adjusted_treatment_coefficient": "<0",
+        "adjusted_p": "<=0.05",
+        "permutation_p": "<=0.05",
+        "individual_gene_raw_treatment_effect_fraction_negative": ">=0.75"
+      }
+    },
+    "week52_support": {
+      "samples": "original secukinumab arm with paired BL.LS/W52.LS",
+      "requirement": "mean module change <0"
+    },
+    "module_generation": {
+      "module_size": 4,
+      "universe": "all four-gene combinations from the feasible fixed 59-gene nomination pool",
+      "coherence": {
+        "baseline_lesional_median_pairwise_spearman": ">=0.15",
+        "baseline_lesional_minimum_pairwise_spearman": ">=-0.20"
+      },
+      "multiple_testing": "Benjamini-Hochberg over every estimable combination separately for baseline-adjusted and week12-adjusted p values; non-estimable combinations occupy p=1 slots",
+      "family_q_requirement": "<=0.10 for both source endpoints",
+      "ranking": "ascending max source q, then descending minimum absolute adjusted t statistic, then descending coherence, then lexicographic gene tuple",
+      "frozen_source_family_maximum": 600
+    }
+  },
+  "ra_development": {
+    "normalization": "median-of-ratios size factors; log2(normalized count+0.5); gene-wise z within cohort; equal four-gene mean",
+    "primary_test": "two-sided Welch t test RA versus control",
+    "multiplicity": "Benjamini-Hochberg across the complete frozen source family separately in each cohort; non-estimable candidates retain p=1 slots",
+    "requirements": {
+      "effect_both_cohorts": ">0",
+      "raw_p_both_cohorts": "<=0.05",
+      "bh_q_both_cohorts": "<=0.10",
+      "lodo_direction_stability_both_cohorts": "=1.00",
+      "positive_gene_fraction_both_cohorts": ">=0.75",
+      "all_leave_one_gene_out_effects_both_cohorts": ">0",
+      "pc1_loadings_same_direction_both_cohorts": true,
+      "matched_random_empirical_p_both_cohorts": "<=0.05"
+    },
+    "matched_random": {
+      "sets": 5000,
+      "matching": "gene mean-expression quintile by variance quintile",
+      "seed_base": 20261500
+    },
+    "portfolio": {
+      "maximum": 24,
+      "ranking": "ascending Fisher combined p, then ascending maximum RA q, then ascending source rank",
+      "redundancy": "greedy selection permits at most two shared genes between selected modules"
+    }
+  },
+  "terminal_holdout": {
+    "dataset": "GSE24742",
+    "authorization": "numeric target values remain unread until the confirmatory portfolio, official GPL570 probe map, samples, directions, tests and thresholds are sealed",
+    "pairs": 12,
+    "scoring": "official GPL570 single-symbol probe map frozen before numeric read; gene-wise z across 24 samples; equal module mean",
+    "tests": ["two-sided paired t", "complete two-sided sign-flip enumeration", "supportive exact Wilcoxon"],
+    "multiplicity": "BH across the entire frozen confirmatory portfolio for paired-t and sign-flip p values separately",
+    "requirements": {
+      "effect_post_minus_pre": "<0",
+      "paired_t_q": "<=0.05",
+      "signflip_q": "<=0.05",
+      "negative_pair_fraction": ">=0.60",
+      "negative_gene_fraction": ">=0.75",
+      "lodo_direction_stability": "=1.00",
+      "all_leave_one_gene_out_effects": "<0"
+    }
+  },
+  "novelty_after_numeric_pass": {
+    "dimensions": ["exact module", "all three-gene subsets", "all gene pairs", "single-gene RA/FLS evidence", "same non-RA-to-RA transfer", "same disease-high/treatment-low chain", "same intervention structure"],
+    "pass_class": "N1 or N2; no prior exact module and no prior identical causal/intervention chain",
+    "boundary": "bounded comprehensive audit does not prove universal absence"
+  },
+  "prohibitions": [
+    "using any current RA numeric value to generate or rerank the V15 source family",
+    "opening GSE24742 before portfolio freeze",
+    "dropping failed or non-estimable candidates from multiplicity slots",
+    "changing genes, weights, mappings, directions, tests or thresholds after the corresponding freeze",
+    "rescuing a failed candidate with a post-result endpoint",
+    "claiming single-gene causality from program-level evidence"
+  ]
+}
