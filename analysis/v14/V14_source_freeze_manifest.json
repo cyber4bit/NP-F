@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "protocol_commit": "4584e990a47f4bfa1e6cc33be91bbf3bb26eea05",
+  "source_gene_pass_count": 2989,
+  "source_gene_pool_size": 40,
+  "source_module_combinations_tested": 91390,
+  "source_modules_passing": 91327,
+  "source_frozen_family_size": 600,
+  "source_frozen_file_sha256": "0f07208b04d8d1db0b836864a0e31dd4460f4e982ac06f463ef2dc41a31020b1",
+  "probe_map_sha256": "e8d37c389c24f804af1934c2b2a727843dc4be41ef01babc3c92f08bd7918846",
+  "manifest_sha256_before_ra_numeric_read": "6cce3286d60853621edf5c58a6d4e85d382a768cc4542f5e57bad153d284a96b",
+  "ra_numeric_values_read": false,
+  "holdout_numeric_values_read": false,
+  "sample_counts": {
+    "baseline_pairs": 65,
+    "week12_secukinumab": 38,
+    "week12_placebo": 24,
+    "week52_secukinumab": 35
+  }
+}
