@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.0",
+  "amendment_id": "V13_PROBE_IDENTIFIER_AMENDMENT_001",
+  "created_at_utc": "2026-08-08T09:57:14Z",
+  "candidate_id": "PSO_RTX_CDC42SE1_IDH3A_SPTSSA_SUB1_V13",
+  "antecedent_recovery_seal_sha256": "c911ad5b9af52af9279351ae0b1cad3f6fab0e8bcc7bf85eeaabc01ee3f00908",
+  "triggering_run": {
+    "repository": "cyber4bit/NP-F",
+    "branch": "analysis/v13-gse24742-holdout",
+    "commit_sha": "718f5c5fefe438ed577bdf378d4a7c7aa20721f5",
+    "workflow_run_id": 31251652467,
+    "job_id": 93088825078,
+    "failure": "Frozen probes missing from matrix: ['225076_at']",
+    "numeric_target_extraction_status": "NOT_STARTED",
+    "basis": "The verifier checks frozen sample and probe identifiers and raises before assigning target_raw = matrix.loc[...]."
+  },
+  "original_identifier": "225076_at",
+  "proposed_identifier": "225076_s_at",
+  "gene": "CDC42SE1",
+  "amendment_class": "PRE_NUMERIC_PLATFORM_IDENTIFIER_CORRECTION_PENDING_OFFICIAL_ANNOTATION",
+  "authorization_rule": {
+    "all_required": [
+      "225076_at is absent from the official GSE24742 GPL570 series matrix identifier universe",
+      "225076_s_at is present in that universe",
+      "the official GPL570 annotation maps 225076_s_at to CDC42SE1",
+      "no target expression values are inspected before this correction is sealed"
+    ],
+    "if_any_condition_fails": "AMENDMENT_REJECTED_AND_CANDIDATE_NOT_ESTIMABLE"
+  },
+  "unchanged": [
+    "candidate genes",
+    "gene weights",
+    "all other probe identifiers",
+    "12 paired samples",
+    "pre/post pairing",
+    "log2 transform",
+    "probe-to-gene aggregation",
+    "gene z-standardization",
+    "module endpoint",
+    "expected direction",
+    "all hard thresholds",
+    "confirmatory family size"
+  ],
+  "prohibition": "This amendment cannot use expression values, effect sizes, p-values, responder status, or any outcome-derived criterion."
+}
