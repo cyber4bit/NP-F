@@ -1,0 +1,176 @@
+{
+  "schema_version": "1.0",
+  "protocol_id": "V14_STRICT_NONRA_FIRST_RA_TRANSFER_PORTFOLIO",
+  "created_at_utc": "2026-08-08T10:09:07Z",
+  "objective": "Identify a psoriasis-derived, treatment-reversible human gene program that transfers to RA fibroblasts and reverses in an independent RA synovial treatment cohort, with comprehensive bounded novelty.",
+  "non_negotiable_order": [
+    "source feasibility and GPL570 identifier audit",
+    "non-RA source-only gene and module generation",
+    "source candidate-family freeze",
+    "RA development in two independent study families",
+    "freeze at most 24 confirmatory modules",
+    "single opening of GSE24742 terminal numeric values",
+    "family-adjusted terminal decision",
+    "bounded comprehensive novelty audit",
+    "independent deterministic terminal verifier"
+  ],
+  "datasets": {
+    "source_non_ra": {
+      "accession": "GSE201827",
+      "disease": "psoriasis",
+      "design": "baseline lesional versus non-lesional paired biopsies; randomized secukinumab versus placebo at week 12",
+      "matrix_sha256": "a724c3bbd2655e01e36d1f18b0f8dd17370ec4be044d09e5cb117bd65133a971",
+      "numeric_role": "candidate_generation"
+    },
+    "ra_development_1": {
+      "accession": "E-MTAB-11791",
+      "cell": "fibroblast pseudobulk",
+      "matrix_sha256": "f25322ff8a04069a49eff184c215756e05aae927c09209c360dda2a1a7e4f5e9",
+      "case_donors": ["026", "028", "050", "074", "077", "081", "083", "084", "087", "093", "096", "098"],
+      "control_donors": ["023", "053", "054", "062", "064", "078", "079", "091", "092", "099"],
+      "numeric_role": "development_only"
+    },
+    "ra_development_2": {
+      "accession": "GSE112656",
+      "cell": "cultured FLS",
+      "matrix_sha256": "88fbb3291e0a39dfd150b226c20d5d3a1eee096f5a54251ca6412c6d70e36180",
+      "case_rule": "column prefix RA_",
+      "control_rule": "column prefix OA_",
+      "numeric_role": "development_only"
+    },
+    "ra_terminal_holdout": {
+      "accession": "GSE24742",
+      "design": "12 paired RA synovial biopsies before and 12 weeks after rituximab",
+      "matrix_sha256": "2eb5a5a619b28f36f245dc08e464024798c96c18db779ebec897c9ed8b491550",
+      "numeric_role": "confirmatory_only",
+      "numeric_values_must_remain_unread_until_confirmatory_portfolio_freeze": true
+    },
+    "gpl570_annotation": {
+      "sha256": "d7cd44352127b1e34f3a720ebea86093ef255a38f1612a85a2962b71bde8f394",
+      "role": "identifier_feasibility_only_before_numeric_analysis"
+    }
+  },
+  "identifier_policy": {
+    "platform": "GPL570",
+    "eligible_probe": "official annotation has exactly one non-empty Gene symbol with no multi-symbol delimiter",
+    "gene_expression": "arithmetic mean of all eligible probes mapped to the gene",
+    "cross_platform_gene_eligibility": "gene symbol is present in both RA development gene universes and has at least one eligible GPL570 probe",
+    "identifier_correction_after_source_numeric_read": "prohibited",
+    "identifier_correction_after_ra_numeric_read": "prohibited"
+  },
+  "source_gene_analysis": {
+    "baseline_contrast": "paired BL.LS minus BL.NL across all donors with both samples",
+    "week12_contrast": "mean within-donor W12.LS-minus-BL.LS change in Secukinumab minus the corresponding change in Placebo",
+    "week52_support": "paired W52.LS minus BL.LS within the original Secukinumab arm; supportive only",
+    "tests": {
+      "baseline": "two-sided one-sample t test plus Wilcoxon sensitivity",
+      "week12": "two-sided Welch t test plus 10000-label permutation with seed 20260814",
+      "week52": "two-sided one-sample t test"
+    },
+    "multiple_testing": "Benjamini-Hochberg across all feasible genes separately for baseline and week12",
+    "gene_pass": {
+      "minimum_baseline_pairs": 30,
+      "minimum_week12_donors_per_arm": 15,
+      "baseline_mean_difference": ">0",
+      "baseline_bh_q": "<=0.05",
+      "baseline_positive_pair_fraction": ">=0.60",
+      "week12_treatment_difference": "<0",
+      "week12_bh_q": "<=0.05",
+      "week12_permutation_p": "<=0.05",
+      "week52_secukinumab_mean_change": "<0"
+    },
+    "priority_score": "minimum of baseline paired standardized effect and absolute week12 treatment standardized effect, plus 0.05 times the sum of negative log10 baseline and week12 BH q values",
+    "source_gene_pool_size": 40
+  },
+  "source_module_generation": {
+    "module_size": 4,
+    "universe": "all four-gene combinations from the 40 source-priority genes",
+    "score": "equal mean of gene-wise z scores within each source analysis sample set",
+    "coherence": {
+      "baseline_lesional_median_pairwise_spearman": ">=0.20",
+      "baseline_lesional_minimum_pairwise_spearman": ">=-0.10"
+    },
+    "module_pass": {
+      "baseline_effect": ">0",
+      "baseline_paired_t_p": "<=0.01",
+      "baseline_positive_pair_fraction": ">=0.65",
+      "week12_treatment_difference": "<0",
+      "week12_welch_p": "<=0.01",
+      "week12_negative_component_fraction": "=1.00",
+      "week52_secukinumab_effect": "<0",
+      "all_four_genes_individually_source_pass": true
+    },
+    "ranking": "descending minimum absolute standardized baseline/week12 module effect, then descending median pairwise correlation, then lexicographic gene tuple",
+    "frozen_source_family_size": 600
+  },
+  "ra_development": {
+    "normalization": "median-of-ratios size factors, log2(normalized count plus 0.5), gene-wise z within cohort, equal four-gene mean",
+    "primary_test": "two-sided Welch t test of RA versus control",
+    "multiple_testing": "Benjamini-Hochberg across the complete 600-module source-frozen family separately in each RA cohort",
+    "development_pass": {
+      "effect_both_cohorts": ">0",
+      "raw_p_both_cohorts": "<=0.05",
+      "bh_q_both_cohorts": "<=0.10",
+      "lodo_direction_stability_both_cohorts": "=1.00",
+      "positive_gene_fraction_both_cohorts": "=1.00",
+      "all_leave_one_gene_out_effects_both_cohorts": ">0",
+      "pc1_gene_loadings_same_direction_both_cohorts": true
+    },
+    "matched_random": {
+      "sets_per_candidate_per_cohort": 5000,
+      "seed_base": 20261400,
+      "matching": "gene mean-expression quintile by gene variance quintile within cohort",
+      "pass": "empirical p <=0.05 in both cohorts"
+    },
+    "portfolio_ranking": "ascending Fisher combined p across the two RA cohorts, then ascending maximum cohort BH q, then descending source module rank score, then lexicographic gene tuple",
+    "redundancy_rule": "greedy selection permits at most two shared genes between any two selected modules",
+    "confirmatory_portfolio_maximum": 24,
+    "minimum_portfolio_size_to_open_holdout": 1
+  },
+  "terminal_holdout": {
+    "pre_samples": ["GSM607508", "GSM609031", "GSM609033", "GSM609035", "GSM609037", "GSM609386", "GSM609388", "GSM609390", "GSM609392", "GSM609394", "GSM609396", "GSM609398"],
+    "post_samples": ["GSM607509", "GSM609032", "GSM609034", "GSM609036", "GSM609038", "GSM609387", "GSM609389", "GSM609391", "GSM609393", "GSM609395", "GSM609397", "GSM609399"],
+    "scoring": "same frozen GPL570 gene-probe map; gene-wise z across the 24 holdout samples; equal four-gene mean",
+    "tests": {
+      "primary": "two-sided paired t test",
+      "exact": "complete two-sided sign-flip enumeration",
+      "supportive": "exact Wilcoxon signed-rank when estimable"
+    },
+    "multiple_testing": "Benjamini-Hochberg across every module in the frozen confirmatory portfolio for paired-t and exact sign-flip p values separately",
+    "candidate_pass": {
+      "complete_pairs": ">=6",
+      "mean_post_minus_pre": "<0",
+      "paired_t_bh_q": "<=0.05",
+      "exact_signflip_bh_q": "<=0.05",
+      "negative_pair_fraction": ">=0.60",
+      "negative_gene_fraction": ">=0.75",
+      "lodo_direction_stability": "=1.00",
+      "all_leave_one_gene_out_effects": "<0"
+    },
+    "formal_selection": "among all family-adjusted pass candidates choose ascending maximum of the two BH q values, then most negative effect, then frozen portfolio rank",
+    "formal_overall_pass_count": "1 if at least one candidate passes, otherwise 0"
+  },
+  "novelty": {
+    "required_after_numeric_pass": true,
+    "dimensions": [
+      "exact four-gene combination in RA",
+      "all four three-gene subsets in RA",
+      "all six gene pairs in RA or synovial fibroblasts",
+      "single-gene RA and FLS evidence",
+      "same psoriasis-to-RA transfer structure",
+      "same disease-high and effective-treatment-low chain",
+      "same intervention context"
+    ],
+    "acceptable_class": "N1 or N2 with no prior exact program and no prior identical causal/intervention chain",
+    "claim_boundary": "bounded literature audit cannot certify universal absence"
+  },
+  "prohibitions": [
+    "reading GSE24742 target expression before portfolio freeze",
+    "changing source family after RA values are read",
+    "changing portfolio after GSE24742 values are read",
+    "dropping failed candidates from the confirmatory multiplicity family",
+    "changing gene weights, direction, thresholds, tests, sample pairing or probe mapping after numeric authorization",
+    "using glycolysis as the title or candidate-generating claim",
+    "declaring single-gene causality from a program-level pass"
+  ]
+}
